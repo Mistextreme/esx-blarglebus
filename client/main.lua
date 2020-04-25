@@ -11,6 +11,7 @@ local isRouteJustAborted = false
 
 local activeRoute = nil
 local activeRouteLine = nil
+local busType = nil
 local stopNumber = 1
 local lastStopCoords = {}
 local totalMoneyPaidThisRoute = 0
@@ -78,6 +79,9 @@ function startMainLoop()
                     handleSpawnPoint(i)
                 end
                 Citizen.Wait(5)
+            elseif isPlayerNotInBus() then
+                ESX.ShowHelpNotification(_('get_back_in_bus'))
+                Citizen.Wait(5)
             else
                 handleActiveRoute()
                 Citizen.Wait(100)
@@ -86,6 +90,11 @@ function startMainLoop()
             Citizen.Wait(1000)
         end
     end
+end
+
+function isPlayerNotInBus()
+    local vehiclePlayerIsIn = GetVehiclePedIsIn(playerPed, false)
+    return vehiclePlayerIsIn ~= Bus.bus
 end
 
 function startPedCleanupThread()
@@ -138,14 +147,21 @@ function handleSpawnPoint(locationIndex)
 end
 
 function startRoute(route)
+    activeRouteLine = selectStartingLine(Config.Routes[route])
+    if activeRouteLine == nil then
+        ESX.ShowNotification(_U('route_selection_cancel'))
+        return
+    end
+
     handleSettingRouteJustStartedAsync()
     isOnDuty = true
     isRouteFinished = false
     activeRoute = Config.Routes[route]
-    activeRouteLine = activeRoute.Lines[math.random(1, #activeRoute.Lines)]
+    busType = getBusType(activeRoute, activeRouteLine)
     totalMoneyPaidThisRoute = 0
     ESX.ShowNotification(_U('route_assigned', _U(activeRouteLine.Name)))
-    Bus.CreateBus(activeRoute.SpawnPoint, activeRoute.BusModel, activeRouteLine.BusColor)
+    Events.RouteStarted(activeRouteLine.Name)
+    Bus.CreateBus(activeRoute.SpawnPoint, busType.BusModel, activeRouteLine.BusColor)
     Blips.StartAbortBlip(activeRoute.Name, activeRoute.SpawnPoint)
     Markers.StartAbortMarker(activeRoute.SpawnPoint)
     Overlay.Start()
@@ -157,6 +173,63 @@ function startRoute(route)
     local firstStopName = _U(activeRouteLine.Stops[1].name)
     ESX.ShowNotification(_U('drive_to_first_marker', firstStopName))
     updateOverlay(firstStopName)
+end
+
+function selectStartingLine(selectedRoute)
+    if #selectedRoute.Lines == 1 then
+        return selectedRoute.Lines[1]
+    end
+
+    return handleMultiLineRouteSelection(selectedRoute)
+end
+
+function handleMultiLineRouteSelection(selectedRoute)
+    local selectedIndex = nil
+
+    ESX.UI.Menu.Open('default', GetCurrentResourceName(), 'line_selector', {
+        title = _U('route_selection_title', _U(selectedRoute.Name)),
+        align = 'top-left', 
+        elements = buildStartingLineMenuElements(selectedRoute)
+    }, function (data, menu)
+        menu.close()
+        selectedIndex = data.current.value
+    end, function (data, menu)
+        menu.close()
+        selectedIndex = -1
+    end)
+
+    while selectedIndex == nil do
+       Citizen.Wait(1) 
+    end
+
+    if selectedIndex == -1 then
+        return nil
+    elseif selectedIndex == 0 then
+        return selectedRoute.Lines[math.random(1, #selectedRoute.Lines)]
+    end
+
+    return selectedRoute.Lines[selectedIndex]
+end
+
+function buildStartingLineMenuElements(selectedRoute)
+    local elements = {{label = _U('route_selection_random'), value = 0}}
+    for i = 1, #selectedRoute.Lines do
+        table.insert(elements, {label = _U(selectedRoute.Lines[i].Name), value = i})
+    end
+    return elements
+end
+
+function getBusType(route, line)
+    return line.BusOverride or route.Bus or getBackwardsCompatibleBusType(route)
+end
+
+function getBackwardsCompatibleBusType(route)
+    return {
+        BusModel = route.BusModel,
+        Capacity = route.Capacity,
+        Doors = route.Doors,
+        FirstSeat = route.FirstSeat
+    }
 end
 
 function handleSettingRouteJustStartedAsync()
@@ -176,12 +249,13 @@ function handleActiveRoute()
 end
 
 function handleReturningBus()
-    local coords = activeRoute.SpawnPoint
+    local coords = getReturnPointCoords(activeRoute, activeRouteLine)
 
     if playerDistanceFromCoords(coords) < Config.Markers.Size then
         Bus.DisplayMessageAndWaitUntilBusStopped(_U('stop_bus'))
 
         TriggerServerEvent('blarglebus:finishRoute', activeRoute.Payment)
+        Events.RouteEnded()
         immediatelyEndRoute()
 
         Markers.ResetMarkers()
@@ -191,37 +265,51 @@ end
 
 function handleNormalStop()
     local currentStop = activeRouteLine.Stops[stopNumber]
+    local currentStopNameKey = activeRouteLine.Stops[stopNumber].name
 
     if playerDistanceFromCoords(currentStop) < Config.Markers.Size then
+        local nextStopNameKey = determineNextStopName()
         lastStopCoords = currentStop
+        Events.ArrivedAtStop(currentStopNameKey, nextStopNameKey)
         handleUnloading(currentStop)
         handleLoading()
         payForEachPedLoaded(#pedsAtNextStop)
 
-        local nextStopName = ''
+        local nextStopName = _U(nextStopNameKey)
         if (isLastStop(stopNumber)) then
-            local coords = activeRoute.SpawnPoint
+            local coords = getReturnPointCoords(activeRoute, activeRouteLine)
             isRouteFinished = true
             Markers.StopAbortMarker()
             Markers.SetMarkers({coords})
             Blips.SetBlipAndWaypoint(activeRoute.Name, coords.x, coords.y, coords.z)
             Blips.StopAbortBlip()
             ESX.ShowNotification(_U('return_to_terminal'))
-            nextStopName = _U('terminal')
         else
-            nextStopName = _U(activeRouteLine.Stops[stopNumber + 1].name)
             ESX.ShowNotification(_U('drive_to_next_marker', nextStopName))
             setUpNextStop()
             stopNumber = stopNumber + 1
         end
 
+        Events.DepartingStop(currentStopNameKey, nextStopNameKey)
         updateOverlay(nextStopName)
     end
 end
 
+function determineNextStopName()
+    if (isLastStop(stopNumber)) then
+        return 'terminal'
+    end
+
+    return activeRouteLine.Stops[stopNumber + 1].name
+end
+
+function getReturnPointCoords(route, line)
+    return line.BusReturnPointOverride or activeRoute.BusReturnPoint or activeRoute.SpawnPoint
+end
+
 function handleUnloading(stopCoords)
     Bus.DisplayMessageAndWaitUntilBusStopped(determineWaitForPassengersMessage())
-    Bus.OpenDoorsAndActivateHazards(activeRoute.Doors)
+    Bus.OpenDoorsAndActivateHazards(busType.Doors)
 
     local departingPeds = {}
     for i = 1, numberDepartingPedsNextStop do
@@ -274,7 +362,7 @@ function handleLoading()
         return Bus.CloseDoorsAndDeactivateHazards()
     end
 
-    local freeSeats = Bus.FindFreeSeats(activeRoute.FirstSeat, activeRoute.Capacity)
+    local freeSeats = Bus.FindFreeSeats(busType.FirstSeat, busType.Capacity)
 
     for i = 1, #pedsAtNextStop do
         Peds.EnterVehicle(pedsAtNextStop[i], Bus.bus, freeSeats[i])
@@ -316,7 +404,7 @@ end
 function setUpNextStop()
     local nextStop = activeRouteLine.Stops[stopNumber + 1]
     local numberOfPedsToSpawn = 0
-    local freeSeats = activeRoute.Capacity - #pedsOnBus
+    local freeSeats = busType.Capacity - #pedsOnBus
     
     pedsAtNextStop = {}
 
@@ -352,11 +440,11 @@ end
 
 function setUpAllStop()
     Log.debug('next stop is All, all peds should unload, should spawn peds equal to capacity')
-    return activeRoute.Capacity, #pedsOnBus
+    return busType.Capacity, #pedsOnBus
 end
 
 function setUpSomeStop(freeSeats)
-    local numberOfPedsToSpawn = math.random(1, activeRoute.Capacity)
+    local numberOfPedsToSpawn = math.random(1, busType.Capacity)
     local minimumDepartingPeds = 1
 
     if numberOfPedsToSpawn > freeSeats then

@@ -7,15 +7,23 @@ Locales['en'] = {
     ['no_passengers_loading']               = 'Wait for passengers to finish unloading. No passengers loading at this stop',
     ['wait_for_passengers']                 = 'Wait for passengers to finish loading and unloading',
 
+    ['route_selection_cancel']              = 'Bus route selection canceled.',
+    ['route_selection_title']               = 'Select %s line',
+    ['route_selection_random']              = 'Random',
+
     ['start_route']                         = 'press ~INPUT_PICKUP~ to start ~g~%s~.',
     ['passengers_loaded']                   = '~g~%d~s~ passengers paid for this stop. Collected ~g~$%d.',
     ['return_to_terminal']                  = 'Route is finished. Return to the terminal.',
     ['stop_bus']                            = 'Stop bus to return it and get paid.',
     ['abort_route_help']                    = 'press ~INPUT_PICKUP~ to abort route. Will cost ~r~$%d.',
+    ['get_back_in_bus']                     = 'Get back in the bus to continue route.',
 
     ['next_stop_label']                     = 'Next Stop',
     ['money_earned_label']                  = 'Money Earned',
     ['stops_remaining_label']               = 'Stops Remaining',
+
+    ['exploit_attempted_kick_message']      = 'You are kicked because of cheat!',
+    ['exploit_attempted_log_message']       = 'blarglebus: %s attempted exploiting! (reason: called server functions when job not set to busdriver)',
 
     ['abort_route']                         = 'Abort ~g~%s',
     ['airport_route']                       = 'Airport Shuttle Route',
@@ -80,4 +88,5 @@ Locales['en'] = {
     ['stop_metro_marathon_prosperity']      = 'Marathon Ave / Properity St',
     ['stop_metro_eclipse_cougar']           = 'W Eclipse Blvd / Cougar Ave',
     ['stop_metro_marathon']                 = 'Marathon Ave',
+
 }
